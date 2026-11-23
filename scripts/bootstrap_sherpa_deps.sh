@@ -100,53 +100,39 @@ extract_zipformer() {
   done
 }
 
+
 extract_android_jni() {
   local tarball="$1"
   local dest="$2"
+  local extracted_dir="$TMP_DIR/jniLibs/arm64-v8a"
 
-  local required_a=(
-    "jniLibs/arm64-v8a/libonnxruntime.so"
-    "jniLibs/arm64-v8a/libsherpa-onnx-jni.so"
-    "jniLibs/arm64-v8a/libsherpa-onnx-c-api.so"
-    "jniLibs/arm64-v8a/libsherpa-onnx-cxx-api.so"
-  )
-  local required_b=(
-    "sherpa-onnx-v1.12.23-android/jniLibs/arm64-v8a/libonnxruntime.so"
-    "sherpa-onnx-v1.12.23-android/jniLibs/arm64-v8a/libsherpa-onnx-jni.so"
-    "sherpa-onnx-v1.12.23-android/jniLibs/arm64-v8a/libsherpa-onnx-c-api.so"
-    "sherpa-onnx-v1.12.23-android/jniLibs/arm64-v8a/libsherpa-onnx-cxx-api.so"
-  )
+  echo "EXTR: android arm64 JNI libs"
 
-  local missing=0
-  for rel in "${required_a[@]}"; do
-    local out_path="$dest/$(basename "$rel")"
-    if [[ -s "$out_path" ]]; then
-      continue
-    fi
-    missing=1
-    break
-  done
+  # Extrai o arquivo inteiro para evitar erro com o prefixo ./
+  tar -xjf "$tarball" -C "$TMP_DIR"
 
-  if [[ "$missing" -eq 0 ]]; then
-    echo "OK  : JNI libs already present"
-    return 0
-  fi
-
-  echo "EXTR: android jni libs"
-  local extracted=()
-  if tar -xjf "$tarball" -C "$TMP_DIR" "${required_a[@]}"; then
-    extracted=("${required_a[@]}")
-  elif tar -xjf "$tarball" -C "$TMP_DIR" "${required_b[@]}"; then
-    extracted=("${required_b[@]}")
-  else
-    echo "ERROR: Failed to extract Android JNI libs from archive" >&2
+  if [[ ! -d "$extracted_dir" ]]; then
+    echo "ERROR: jniLibs/arm64-v8a not found" >&2
+    tar -tjf "$tarball" | head -40 >&2
     exit 1
   fi
 
-  for rel in "${extracted[@]}"; do
-    cp -f "$TMP_DIR/$rel" "$dest/$(basename "$rel")"
+  local required=(
+    "libonnxruntime.so"
+    "libsherpa-onnx-jni.so"
+    "libsherpa-onnx-c-api.so"
+    "libsherpa-onnx-cxx-api.so"
+  )
+
+  for name in "${required[@]}"; do
+    if [[ ! -s "$extracted_dir/$name" ]]; then
+      echo "ERROR: Missing $name in Android archive" >&2
+      exit 1
+    fi
+    cp -f "$extracted_dir/$name" "$dest/$name"
   done
 }
+
 
 ZIPFORMER_TARBALL="$TMP_DIR/zipformer.tar.bz2"
 SHERPA_ANDROID_TARBALL="$TMP_DIR/sherpa-android.tar.bz2"
