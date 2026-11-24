@@ -14,6 +14,7 @@ import com.yoyostudios.clashcompanion.deck.DeckManager
 import com.yoyostudios.clashcompanion.detection.ArenaDetector
 import com.yoyostudios.clashcompanion.detection.HandDetector
 import com.yoyostudios.clashcompanion.overlay.OverlayManager
+import com.yoyostudios.clashcompanion.learning.BattleLearningStore
 import com.yoyostudios.clashcompanion.strategy.OpusCoach
 import com.yoyostudios.clashcompanion.util.Coordinates
 import kotlinx.coroutines.*
@@ -1099,6 +1100,23 @@ Or: {"action":"wait","reasoning":"<15 words max>"}"""
         // Make overlay transparent to touches so dispatchGesture doesn't hit overlay
         overlay?.setPassthrough(true)
         svc.playCard(slotX, slotY, zoneX, zoneY)
+
+        // Store the attempted play for later battle analysis.
+        // This records the command attempt, not visual confirmation that the card was placed.
+        val playSource = when {
+            cmd.rawTranscript.startsWith("AUTOPILOT:") -> "autopilot"
+            cmd.rawTranscript.startsWith("SMART:") -> "smart"
+            cmd.rawTranscript.startsWith("QUEUE") -> "queue"
+            cmd.rawTranscript.startsWith("RULE:") -> "rule"
+            else -> "manual"
+        }
+        BattleLearningStore.recordPlay(
+            context = svc.applicationContext,
+            card = card,
+            zone = displayZone,
+            hand = HandDetector.currentHand,
+            source = playSource
+        )
 
         // Release busy lock and restore overlay touchability after gesture completes
         handler.postDelayed({
