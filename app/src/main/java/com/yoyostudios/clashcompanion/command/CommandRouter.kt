@@ -33,8 +33,9 @@ object CommandRouter {
 
     private const val TAG = "ClashCompanion"
 
-    private const val VISION_ARENA_TARGET_W = 540
-    private const val VISION_ARENA_JPEG_QUALITY = 60
+    // Keep the lower HUD in the vision frame: it contains the elixir bar and hand.
+    private const val VISION_ARENA_TARGET_W = 720
+    private const val VISION_ARENA_JPEG_QUALITY = 68
 
     /** Set by OverlayManager when overlay is shown */
     var overlay: OverlayManager? = null
@@ -440,7 +441,7 @@ object CommandRouter {
             "\nLAST PLAYED: $lastPlayedCard at $lastPlayedZone (${agoSec}s ago)"
         } else ""
 
-        return """You are a real-time Clash Royale tactical AI. Speed is critical — be decisive.
+        return """You are a real-time Clash Royale tactical AI. Be decisive, but never invent information.
 
 DECK: $deckJson
 $playbookSection
@@ -449,7 +450,10 @@ $arenaSection$lastPlayedSection
 
 VALID ZONES: left_bridge, right_bridge, center, behind_left, behind_right, back_center, front_left, front_right
 
-If an ARENA screenshot image is provided, use it as ground truth for threats and lane selection.
+If a screenshot is provided, inspect the full visible game HUD, including the elixir bar and hand.
+The elixir estimate is visual and may be uncertain: if the bar is obscured or ambiguous, say UNKNOWN
+in your reasoning and do not pretend to know an exact amount. Never play a card unless its cost is
+clearly affordable from the visible elixir or the user explicitly requested a manual action.
 Orientation: YOUR side is the BOTTOM of the screen. ENEMY side is the TOP.
 
 Rules:
@@ -460,10 +464,14 @@ Rules:
 - When user says "suggest" or gives a vague command: pick the best offensive play from current hand.
 - For ambiguous commands: safest positive-elixir-trade play.
 - Buildings go in "center" or "behind_left"/"behind_right".
-- NEVER return "wait" unless user explicitly asks to wait. Always play a card.
+- Do not force a play. Return "wait" when elixir is insufficient/unknown, no useful defense exists,
+  or every available play creates a clearly bad trade. Waiting is a valid tactical decision.
+- Before defending, identify the most dangerous detected enemy threat and select a counter from CURRENT HAND.
+- Prefer efficient defense and avoid spending more elixir than needed; do not assume a card counter works
+  if the screenshot does not support the matchup.
 
 Respond ONLY with JSON: {"action":"play","card":"<exact card name>","zone":"<zone_key>","reasoning":"<15 words max>"}
-Or ONLY if user says wait: {"action":"wait","reasoning":"<15 words max>"}"""
+Or: {"action":"wait","reasoning":"<15 words max>"}"""
     }
 
     private fun wantsDefenseVision(text: String): Boolean {
@@ -489,10 +497,11 @@ Or ONLY if user says wait: {"action":"wait","reasoning":"<15 words max>"}"""
         } ?: return null
 
         try {
-            val top = Coordinates.ARENA_CROP_TOP
-            val bottom = Coordinates.ARENA_CROP_BOTTOM
-            val height = bottom - top
-            if (top < 0 || height <= 0 || top + height > safeCopy.height) return null
+            // Include the lower HUD (elixir bar + card hand), not only the arena.
+            // The previous crop ended above the hand and gave Gemini no direct elixir evidence.
+            val top = Coordinates.ARENA_CROP_TOP.coerceIn(0, safeCopy.height - 1)
+            val height = safeCopy.height - top
+            if (height <= 0) return null
 
             val crop = Bitmap.createBitmap(safeCopy, 0, top, safeCopy.width, height)
 
@@ -596,11 +605,13 @@ Or ONLY if user says wait: {"action":"wait","reasoning":"<15 words max>"}"""
 
                     val result = withContext(Dispatchers.IO) {
                         val systemPrompt = buildSmartPrompt()
-                        val userText = "AUTOPILOT: You MUST play a card NOW from your current hand. " +
-                                "Never return wait — always play something. " +
-                                "Use ARENA STATE and/or the arena screenshot to defend correctly. " +
-                                "Prioritize: 1) Counter enemy threats. 2) Build pushes with synergies from the playbook. " +
-                                "3) Cycle cheap cards (Knight, Archers) when no clear play. Always place cards — never idle."
+                        val userText = "AUTOPILOT: Evaluate the current board before acting. " +
+                                "Use the screenshot's elixir bar and card hand as visual evidence; estimate elixir only " +
+                                "when the bar is clearly visible, otherwise treat the amount as UNKNOWN. " +
+                                "Do not guess an exact elixir value and do not play a card whose cost you cannot afford. " +
+                                "Defend urgent threats first, favor positive or even elixir trades, and preserve a counter " +
+                                "for the opponent's win condition. If no safe or useful play is available, return action=wait. " +
+                                "Never cycle a card just to avoid waiting."
 
                         val arenaImg = captureArenaImageBase64()
                         if (arenaImg != null) {
